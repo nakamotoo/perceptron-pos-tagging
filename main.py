@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import numpy as np
 import random
 from tqdm import tqdm
@@ -33,7 +34,7 @@ def create_word_dict(filename):
     word_dict = {}
     word_id = 0
     for word, count in word_count_dict.items():
-        if count <= 5:
+        if count <= 10:
             continue
         else:
             word_dict[word] = word_id
@@ -64,14 +65,12 @@ class Sentence:
         if self.features is not None:
             return self.features
 
+        features = []
+        one_hot_table = np.identity(dim_words)[self.word_ids]
         prev_one_hot = np.array([0 for i in range(dim_words)])
 
-        features = []
-
-        one_hot_table = np.identity(dim_words)[self.word_ids]
-
         for index, word in enumerate(self.words):
-            #             word_id = self.word_ids[index]
+
             one_hot = one_hot_table[index].tolist()
 
             feature_dict = {
@@ -82,8 +81,9 @@ class Sentence:
                 'is_all_capital': int(word.upper() == word)
             }
 
-            feature = one_hot + list(feature_dict.values())
+            feature = one_hot + list(prev_one_hot) + list(feature_dict.values())
             features.append(feature)
+            prev_one_hot = one_hot
 
         features = np.array(features)
         self.features = features
@@ -96,8 +96,6 @@ def read_samples(filename):
 
     for line in tqdm(f.readlines()):
         line = line.strip()
-
-#         line = "##/## " + line + " $$/$$"
         tokens = line.split(' ')
 
         word_ids = []
@@ -135,10 +133,6 @@ def read_samples(filename):
 
             word_id = word_dict[lower_word]
             word_ids.append(word_id)
-
-#             feature_vec = extract_features(word, index, len_sentence, word_id, prev_word_id)
-#             features.append(feature_vec)
-
             prev_word_id = word_id
 
         sentence = Sentence(labels, word_ids, words, pos_tags, tokens)
@@ -147,17 +141,17 @@ def read_samples(filename):
     return data
 
 
-def classify(sentence, features):
+def classify(sentence, features, dim_pos):
+    predicted_pos_ids = []
+    prev_predicted_id = 0
 
-    #     predicted_pos_ids = [-1] # 開始記号分
-
-    predicted_pos_ids = [-1]
-
+    features_aug = []
     for ind, word_id in enumerate(sentence.word_ids):
-        #         if word_id == 0 or word_id == 1:
-        #             continue
-
         feature_vec = features[ind]
+        prev_predicted_pos_vec = np.identity(dim_pos)[prev_predicted_id]
+
+        feature_vec = np.append(feature_vec, prev_predicted_pos_vec)
+
         max_score = -np.inf
         max_i = -1
 
@@ -167,43 +161,39 @@ def classify(sentence, features):
                 max_score = score
                 max_i = i
 
-#         max_scores.append(max_score)
         predicted_pos_ids.append(max_i)
+        prev_predicted_pos_id = max_i
+        features_aug.append(feature_vec)
 
-#     predicted_pos_ids.append(-1) # 終了記号分
-#     features.append([-1, -1, -1])
-    return predicted_pos_ids
+    return predicted_pos_ids, features_aug
 
 
 pos_dict = {}
 word_dict = create_word_dict("data/train.pos")
-dim_words = len(word_dict)
 
-weight_vectors = []
-u_vectors = []
 
 training_data = []
 valid_data = []
 training_data = read_samples("data/train.pos")
-print(len(pos_dict))
-print(len(word_dict))
+print(len(pos_dict), len(word_dict))
 valid_data = read_samples("data/val.pos")
-print(len(pos_dict))
-print(len(word_dict))
+print(len(pos_dict), len(word_dict))
+test_data = read_samples("data/test.pos")
+print(len(pos_dict), len(word_dict))
 
 dim_words = len(word_dict)
+dim_pos = len(pos_dict)
 
 # initialization
 fe = training_data[0].extract_features(dim_words)
-feature_num = fe.shape[1]
+feature_num = fe.shape[1] + dim_pos
 weight_vectors = np.random.uniform(
     low=-0.08, high=0.08, size=(len(pos_dict), feature_num)).astype('float32')
 u_vectors = np.zeros(shape=(len(pos_dict), feature_num)).astype('float32')
 
-
-# training
-
-for epoch in range(100):
+t = 0
+for epoch in range(2):
+    # training
     num_updates = 0
     correct = 0
     total = 0
@@ -211,25 +201,72 @@ for epoch in range(100):
     for j in tqdm(range(len(training_data))):
         r = random.randint(0, len(training_data) - 1)
         sentence = training_data[r]
-
         features = sentence.extract_features(dim_words)
-        predicted_pos_ids = classify(sentence, features)
+        predicted_pos_ids, features = classify(sentence, features, dim_pos)
 
         for i in range(len(sentence.labels)):
             label, y, feature_vec = sentence.labels[i], predicted_pos_ids[i], features[i]
-
-#             if label in [0, 1]:
-#                 continue
-
             total += 1
+            t += 1
 
             # 重みの更新
             if label == y:
+                u_vectors += weight_vectors
                 correct += 1
                 continue
 
             weight_vectors[label] += feature_vec
             weight_vectors[y] -= feature_vec
+            u_vectors += weight_vectors
             num_updates += 1
-    print(epoch, "num_updates = ", num_updates,
+
+    print("TRAIN", epoch, "num_updates = ", num_updates,
           "accuracy = ", correct / total * 100)
+
+    # validation
+    for sentence in tqdm(valid_data):
+        features = sentence.extract_features(dim_words)
+        predicted_pos_ids, _ = classify(sentence, features, dim_pos)
+
+        for i in range(len(sentence.labels)):
+            label, y = sentence.labels[i], predicted_pos_ids[i]
+            if (y == label):
+                correct += 1
+            total += 1
+    print("VAL", epoch, "num_updates = ", num_updates,
+          "accuracy = ", correct / total * 100)
+
+# TEST
+for sentence in tqdm(test_data):
+    features = sentence.extract_features(dim_words)
+    predicted_pos_ids, _ = classify(sentence, features, dim_pos)
+
+    for i in range(len(sentence.labels)):
+        label, y = sentence.labels[i], predicted_pos_ids[i]
+        if (y == label):
+            correct += 1
+        total += 1
+print("TEST", epoch, "num_updates = ", num_updates,
+        "accuracy = ", correct / total * 100)
+
+np.save("w", weight_vectors)
+# TEST
+print("average")
+
+
+weight_vectors = u_vectors / t
+
+for sentence in tqdm(test_data):
+    features = sentence.extract_features(dim_words)
+    predicted_pos_ids, _ = classify(sentence, features, dim_pos)
+
+    for i in range(len(sentence.labels)):
+        label, y = sentence.labels[i], predicted_pos_ids[i]
+        if (y == label):
+            correct += 1
+        total += 1
+print("TEST", epoch, "num_updates = ", num_updates,
+        "accuracy = ", correct / total * 100)
+
+np.save("v", weight_vectors)
+
