@@ -34,7 +34,7 @@ def create_word_dict(filename):
     word_dict = {}
     word_id = 0
     for word, count in word_count_dict.items():
-        if count <= 10:
+        if count <= 8:
             continue
         else:
             word_dict[word] = word_id
@@ -78,8 +78,12 @@ class Sentence:
                 'is_first_word': int(index == 0),
                 'is_last_word': int(index == len(self.words) - 1),
                 'is_numeric': int(word.isdigit()),
-                'is_all_capital': int(word.upper() == word)
-            }
+                'is_all_capital': int(word.upper() == word),
+                'is_end_s' : int(word[-1] == 's'),
+                'is_end_ing' : int(word[-3:] == 'ing') if len(word) > 3 else 0,
+                'is_end_tion' : int(word[-4:] == 'tion') if len(word) > 4 else 0,
+                'is_end_ed' : int(word[-2:] == 'ed') if len(word) > 3 else 0,
+                'is_end_y' : int(word[-1:] == 'y')            }
 
             feature = one_hot + list(prev_one_hot) + list(feature_dict.values())
             features.append(feature)
@@ -235,6 +239,8 @@ for epoch in range(2):
             total += 1
     print("VAL", epoch, "num_updates = ", num_updates,
           "accuracy = ", correct / total * 100)
+    np.save("w_{}".format(str(epoch)), weight_vectors)
+    np.save("v_{}".format(str(epoch)), u_vectors / t)
 
 # TEST
 for sentence in tqdm(test_data):
